@@ -1,0 +1,48 @@
+# Python
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Data and local runtime
+data/uploads/
+data/raw/
+data/processed/
+data/vector_store/
+milvus/
+postgres/
+minio/
+
+# Secrets and private documents
+*.key
+*.pem
+*.crt
+secrets/
+private/
