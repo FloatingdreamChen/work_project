@@ -71,7 +71,12 @@ async def match_positions(
             limit=payload.limit,
         ),
     )
-    result = agent.match(profile, positions)
+    result = agent.match(
+        profile,
+        positions,
+        preferred_regions=payload.preferred_regions,
+        risk_preference=payload.risk_preference,
+    )
     report_id = await position_service.save_match_report(
         db,
         current_user["id"],

@@ -16,6 +16,9 @@ POSITION_FIELDS = [
     "position_name",
     "position_code",
     "recruitment_count",
+    "applicant_count",
+    "competition_ratio",
+    "previous_min_score",
     "education_requirement",
     "degree_requirement",
     "major_requirement",
@@ -26,6 +29,7 @@ POSITION_FIELDS = [
     "remarks",
     "source_name",
     "source_url",
+    "source_published_at",
 ]
 
 

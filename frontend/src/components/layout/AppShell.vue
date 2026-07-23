@@ -22,6 +22,14 @@
           <el-icon><EditPen /></el-icon>
           <span>练习批改</span>
         </a>
+        <a class="nav-item" href="#knowledge">
+          <el-icon><Collection /></el-icon>
+          <span>知识库</span>
+        </a>
+        <a class="nav-item" href="#history">
+          <el-icon><Notebook /></el-icon>
+          <span>练习历史</span>
+        </a>
       </nav>
     </aside>
 
@@ -43,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { Briefcase, EditPen, SwitchButton, User } from '@element-plus/icons-vue'
+import { Briefcase, Collection, EditPen, Notebook, SwitchButton, User } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'

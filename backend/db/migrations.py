@@ -3,25 +3,26 @@ from pathlib import Path
 from sqlalchemy import text
 
 from backend.core.logger import get_logger
-from backend.db.session import AsyncSessionLocal
 
 
 logger = get_logger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def split_sql_statements(sql: str) -> list[str]:
+    return [statement.strip() for statement in sql.split(";") if statement.strip()]
+
+
 async def run_migrations() -> None:
     """Apply the idempotent bootstrap SQL used by docker-compose."""
+    from backend.db.session import AsyncSessionLocal
+
     sql_path = PROJECT_ROOT / "scripts" / "init_db.sql"
     if not sql_path.exists():
         logger.warning("db.init_sql_missing")
         return
 
-    statements = [
-        statement.strip()
-        for statement in sql_path.read_text(encoding="utf-8").split(";")
-        if statement.strip()
-    ]
+    statements = split_sql_statements(sql_path.read_text(encoding="utf-8"))
     async with AsyncSessionLocal() as session:
         try:
             for statement in statements:
