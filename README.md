@@ -4,10 +4,10 @@
 
 ## 项目目标
 
-- 帮助用户整理个人条件、筛选可报岗位、识别资格风险。
+- 记录。帮助用户整理个人条件、筛选可报岗位、识别资格风险。
 - 根据岗位目标、考试时间和用户基础生成备考计划。
 - 支持行测、申论、面试等问答、练习、解析与复盘。
-- 使用本地数据库和向量知识库承载岗位表、公告、考试大纲、政策文件、题库与用户学习记录。
+- 使用本地数据库和向量知识库承载岗位表、公告、考试大纲、政策文件、题库与用户学习
 
 ## 核心 Agent
 
@@ -25,8 +25,8 @@
 
 ```text
 work_project/
-  backend/                 # 后端代码预留目录
-  frontend/                # 前端代码预留目录
+  backend/                 # FastAPI、LangGraph Agent、RAG、MCP、服务层和测试
+  frontend/                # Vue 3 工作台
   docs/                    # 项目前置设计文档
   scripts/                 # 数据库与知识库脚本
   AGENTS.md                # AI 编程代理协作约束
@@ -40,11 +40,17 @@ work_project/
 
 本目录已从“项目前置文件包”推进为最小可运行工程雏形：
 
-- `backend/`：FastAPI 分层结构，包含认证、用户画像、岗位导入/检索/匹配、AI 聊天入口和练习批改接口。
-- `frontend/`：Vue 3 + Vite + TypeScript + Pinia + Element Plus 工作台，首屏直接提供画像、岗位匹配、AI 问答和练习批改。
-- `backend/agents/position_match/`：`PositionMatchAgent`，用确定性规则输出匹配度、资格风险和人工核验项。
-- `backend/agents/study_practice/`：`StudyPracticeAgent`，提供备考计划和练习批改的首版规则实现。
-- `backend/tests/`：Agent 最小单测。
+- `backend/`：FastAPI 分层结构，包含认证、用户画像、岗位导入/检索/匹配、知识库、AI 聊天入口、备考计划、练习批改、练习报告和错题接口。
+- `frontend/`：Vue 3 + Vite + TypeScript + Pinia + Element Plus 工作台，提供画像、岗位匹配、AI 问答、练习批改、个性化计划、知识库检索和练习历史。
+- `backend/agents/position_match/`：`PositionMatchAgent`，规则匹配保证结构化结果，有 API Key 时使用 LLM 生成解释和建议。
+- `backend/agents/study_practice/`：`StudyPracticeAgent`，规则批改兜底，有 API Key 时使用 LLM 做深度批改。
+- `backend/agents/*/state.py`、`nodes.py`、`graph.py`：两个 Agent 均已按 LangGraph 的状态、节点、图编排拆分。
+- `POST /api/v1/practice/plan`：根据考试日期、学习时间、基础水平和薄弱模块生成个性化备考计划，最短三个月起步。
+- `POST /api/v1/practice/report`：基于近阶段练习记录生成学习报告和调整建议。
+- `backend/core/retry.py`：三层兜底雏形，包含自动重试、Agent 级降级、系统级兜底。
+- `backend/mcp/`：知识库检索和联网搜索 MCP 工具服务，联网结果带可信度、发布日期和导入时间元数据。
+- `backend/models/`、`backend/db/alembic/`：ORM model 映射与 Alembic 迁移骨架。
+- `backend/tests/`：覆盖 Agent、RAG、图记忆、岗位匹配、导入解析、联网来源质量、数据库 schema、练习服务和合规模块。
 
 ## 本地启动
 
@@ -83,8 +89,12 @@ npm run dev
 当前已通过：
 
 ```bash
-python -m compileall backend
+python -m compileall backend scripts
 python -m pytest backend/tests
+cd frontend
+npm run build
 ```
+
+更完整的验证说明见 `TESTING.md`。
 
 如本机已有旧项目同技术栈环境，也可以直接用该 Python 环境运行本项目；但不要修改旧项目目录下的任何文件。

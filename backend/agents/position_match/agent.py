@@ -2,11 +2,41 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.core.llm_factory import LLMFactory
+from backend.core.major_catalog import major_matches, policy_basis
+
 
 DISCLAIMER = (
     "本结果不是官方资格审核结论。岗位条件、公告政策和专业目录具有时效性，"
     "请以招录机关最新公告、岗位表和人工审核为准。"
 )
+
+MATCH_STRATEGIES = {
+    "conservative": {
+        "label": "稳健优先",
+        "tier_thresholds": {"冲": 86, "稳": 72, "保": 58},
+        "high_competition_penalty": 10,
+        "medium_competition_penalty": 4,
+        "large_recruitment_boost": 5,
+        "previous_score_margin": 8,
+    },
+    "balanced": {
+        "label": "均衡策略",
+        "tier_thresholds": {"冲": 82, "稳": 68, "保": 55},
+        "high_competition_penalty": 7,
+        "medium_competition_penalty": 3,
+        "large_recruitment_boost": 4,
+        "previous_score_margin": 5,
+    },
+    "aggressive": {
+        "label": "冲刺优先",
+        "tier_thresholds": {"冲": 78, "稳": 64, "保": 52},
+        "high_competition_penalty": 4,
+        "medium_competition_penalty": 1,
+        "large_recruitment_boost": 3,
+        "previous_score_margin": 2,
+    },
+}
 
 
 class PositionMatchAgent:
@@ -16,18 +46,73 @@ class PositionMatchAgent:
         self,
         profile: dict[str, Any],
         positions: list[dict[str, Any]],
+        preferred_regions: list[str] | None = None,
+        risk_preference: str = "balanced",
     ) -> dict[str, Any]:
-        items = [self._score_position(profile, position) for position in positions]
+        strategy = self._strategy(risk_preference)
+        items = [
+            self._score_position(profile, position, preferred_regions or [], strategy)
+            for position in positions
+        ]
         items.sort(key=lambda item: item["score"], reverse=True)
         return {
             "agent": "PositionMatchAgent",
             "disclaimer": DISCLAIMER,
+            "strategy": {
+                "risk_preference": risk_preference if risk_preference in MATCH_STRATEGIES else "balanced",
+                "label": strategy["label"],
+                "tier_thresholds": strategy["tier_thresholds"],
+            },
             "items": items,
             "sources": self._sources(positions),
         }
 
+    async def explain_with_ai(
+        self,
+        profile: dict[str, Any],
+        positions: list[dict[str, Any]],
+        rule_result: dict[str, Any] | None = None,
+        knowledge: list[dict[str, Any]] | None = None,
+        web_results: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Ask the configured LLM to explain the rule result with compliance constraints."""
+        result = rule_result or self.match(profile, positions)
+        compact_items = [
+            {
+                "岗位": item["position"].get("position_name"),
+                "部门": item["position"].get("department"),
+                "分数": item["score"],
+                "分类": item["tier"],
+                "风险": item["risks"],
+                "核验": item["verification"],
+            }
+            for item in result.get("items", [])[:5]
+        ]
+        prompt = (
+            "你是考公岗位匹配助手，不是官方招录机关。请基于规则匹配结果、知识库片段和联网结果，"
+            "用中文给出稳健建议。必须说明资格判断不是官方审核结论；不得承诺录取、进面或上岸；"
+            "不得鼓励伪造学历、经历、证书、党员身份、基层经历。"
+        )
+        user_content = (
+            f"用户画像：{profile}\n"
+            f"规则匹配结果：{compact_items}\n"
+            f"知识库片段：{knowledge or []}\n"
+            f"联网结果：{web_results or []}\n"
+            "请输出：1. 总体判断；2. 冲稳保建议；3. 资格风险；4. 需人工核验材料；5. 下一步行动。"
+        )
+        return await LLMFactory.ainvoke(
+            [{"role": "user", "content": user_content}],
+            agent_type="position_match",
+            temperature=0.2,
+            system_prompt=prompt,
+        )
+
     def _score_position(
-        self, profile: dict[str, Any], position: dict[str, Any]
+        self,
+        profile: dict[str, Any],
+        position: dict[str, Any],
+        preferred_regions: list[str],
+        strategy: dict[str, Any],
     ) -> dict[str, Any]:
         score = 60
         matched: list[str] = []
@@ -59,6 +144,9 @@ class PositionMatchAgent:
             risks,
             verification,
         )
+        score += self._check_region_preference(profile, position, preferred_regions, matched)
+        score += self._check_competition(position, matched, risks, strategy)
+        score += self._check_previous_score(profile, position, matched, risks, verification, strategy)
         score += self._check_contains(
             profile.get("political_status"),
             position.get("political_requirement"),
@@ -98,9 +186,9 @@ class PositionMatchAgent:
             score -= min(12, len(verification) * 3)
 
         score = max(0, min(100, score))
-        tier = "冲" if score >= 82 else "稳" if score >= 68 else "保" if score >= 55 else "不建议"
+        tier = self._tier(score, strategy["tier_thresholds"])
         rationale = (
-            f"匹配度 {score} 分，归类为“{tier}”。"
+            f"匹配度 {score} 分，按“{strategy['label']}”归类为“{tier}”。"
             f"已匹配 {len(matched)} 项，风险 {len(risks)} 项，待核验 {len(verification)} 项。"
         )
         return {
@@ -110,6 +198,7 @@ class PositionMatchAgent:
             "matched": matched,
             "risks": risks,
             "verification": verification,
+            "policy_basis": policy_basis(position.get("source_name"), position.get("source_url")),
             "rationale": rationale,
         }
 
@@ -145,22 +234,91 @@ class PositionMatchAgent:
         risks: list[str],
         verification: list[str],
     ) -> int:
-        req = self._norm(requirement)
-        val = self._norm(major)
-        if not req or "不限" in req:
-            matched.append("专业：岗位未设置限制")
+        val = str(major or "").strip()
+        is_match, needs_verify, reason = major_matches(val, str(requirement or ""))
+        if is_match and not needs_verify:
+            matched.append(f"专业：{reason}")
             return 8
-        if not val:
-            verification.append(f"专业：用户画像缺失，需按专业目录核验“{requirement}”")
+        if is_match and needs_verify:
+            verification.append(f"专业：{reason}")
+            return 8
+        if needs_verify:
+            verification.append(f"专业：{reason}")
             return 0
-        if val in req or req in val:
-            matched.append(f"专业：{major} 命中岗位要求")
-            return 16
-        if any(token and token in req for token in val.replace("与", " ").split()):
-            verification.append(f"专业：可能相近，需按专业目录核验“{major}”与“{requirement}”")
-            return 3
-        risks.append(f"专业：{major} 未命中岗位专业要求“{requirement}”")
+        risks.append(f"专业：{reason}")
         return -18
+
+    def _check_region_preference(
+        self,
+        profile: dict[str, Any],
+        position: dict[str, Any],
+        preferred_regions: list[str],
+        matched: list[str],
+    ) -> int:
+        target_region = str(profile.get("target_region") or "")
+        regions = [region for region in [target_region, *preferred_regions] if region]
+        province = str(position.get("province") or "")
+        city = str(position.get("city") or "")
+        if any(region and (region in province or region in city or province in region or city in region) for region in regions):
+            matched.append(f"地区偏好：岗位位于 {province}{city}，符合目标地区")
+            return 5
+        return 0
+
+    def _check_competition(
+        self,
+        position: dict[str, Any],
+        matched: list[str],
+        risks: list[str],
+        strategy: dict[str, Any],
+    ) -> int:
+        ratio = position.get("competition_ratio")
+        recruitment_count = position.get("recruitment_count")
+        score = 0
+        if recruitment_count and int(recruitment_count) >= 3:
+            matched.append(f"招录人数：计划招录 {recruitment_count} 人，机会相对更稳定")
+            score += int(strategy["large_recruitment_boost"])
+        if ratio is None:
+            return score
+        ratio = float(ratio)
+        if ratio <= 30:
+            matched.append(f"竞争比：约 {ratio}:1，竞争压力相对可控")
+            score += 6
+        elif ratio >= 100:
+            risks.append(f"竞争比：约 {ratio}:1，竞争压力较高")
+            score -= int(strategy["high_competition_penalty"])
+        elif ratio >= 60:
+            risks.append(f"竞争比：约 {ratio}:1，竞争压力偏高")
+            score -= int(strategy["medium_competition_penalty"])
+        return score
+
+    def _check_previous_score(
+        self,
+        profile: dict[str, Any],
+        position: dict[str, Any],
+        matched: list[str],
+        risks: list[str],
+        verification: list[str],
+        strategy: dict[str, Any],
+    ) -> int:
+        previous_min_score = position.get("previous_min_score")
+        if previous_min_score is None:
+            return 0
+        expected_score = self._expected_written_score(profile)
+        if expected_score is None:
+            verification.append(f"往年分数：岗位往年最低分约 {previous_min_score}，需结合模考成绩核验")
+            return 0
+        margin = float(expected_score) - float(previous_min_score)
+        required_margin = float(strategy["previous_score_margin"])
+        if margin >= required_margin:
+            matched.append(f"往年分数：模考/预估 {expected_score}，高于往年最低分约 {margin:.1f} 分")
+            return 5
+        if margin >= 0:
+            verification.append(
+                f"往年分数：模考/预估 {expected_score} 略高于往年最低分，安全边际不足 {required_margin:g} 分"
+            )
+            return 0
+        risks.append(f"往年分数：模考/预估 {expected_score} 低于往年最低分约 {abs(margin):.1f} 分")
+        return -6
 
     def _check_work_years(
         self,
@@ -221,6 +379,37 @@ class PositionMatchAgent:
                 sources.append({"name": name, "url": url})
                 seen.add(key)
         return sources
+
+    def _strategy(self, risk_preference: str) -> dict[str, Any]:
+        return MATCH_STRATEGIES.get(risk_preference, MATCH_STRATEGIES["balanced"])
+
+    def _tier(self, score: int, thresholds: dict[str, int]) -> str:
+        if score >= thresholds["冲"]:
+            return "冲"
+        if score >= thresholds["稳"]:
+            return "稳"
+        if score >= thresholds["保"]:
+            return "保"
+        return "不建议"
+
+    def _expected_written_score(self, profile: dict[str, Any]) -> float | None:
+        for key in ("expected_written_score", "mock_score", "written_score"):
+            value = profile.get(key)
+            if value not in (None, ""):
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+        current_scores = profile.get("current_scores")
+        if isinstance(current_scores, dict):
+            for key in ("笔试", "总分", "行测申论", "written"):
+                value = current_scores.get(key)
+                if value not in (None, ""):
+                    try:
+                        return float(value)
+                    except (TypeError, ValueError):
+                        return None
+        return None
 
     def _norm(self, value: Any) -> str:
         return str(value or "").strip().lower()

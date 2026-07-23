@@ -49,6 +49,17 @@ app.add_middleware(
 
 app.include_router(api_router, prefix="/api/v1")
 
+try:
+    from backend.mcp.knowledge_base_server import mcp as kb_mcp
+    from backend.mcp.web_search_server import mcp as web_mcp
+
+    if kb_mcp is not None:
+        app.mount("/mcp/kb", kb_mcp.streamable_http_app())
+    if web_mcp is not None:
+        app.mount("/mcp/web-search", web_mcp.streamable_http_app())
+except Exception as exc:  # pragma: no cover - startup should survive missing optional MCP deps
+    get_logger(__name__).warning("mcp.mount_skipped | error=%s", exc)
+
 
 @app.get("/health", tags=["系统"])
 async def health_check() -> dict:

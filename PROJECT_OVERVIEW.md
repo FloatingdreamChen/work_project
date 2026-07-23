@@ -45,24 +45,43 @@
 - 岗位匹配接口
 - AI 聊天入口
 - 练习批改接口
-- `PositionMatchAgent` 规则版
-- `StudyPracticeAgent` 规则版
+- 个性化备考计划接口
+- 阶段练习报告接口
+- `PositionMatchAgent` 规则版 + LLM 解释增强
+- `StudyPracticeAgent` 规则版 + LLM 批改增强
+- OpenAI-compatible LLM 工厂
+- 自动重试、Agent 降级、系统兜底三层兜底雏形
+- 知识库检索 MCP 工具
+- 联网搜索 MCP 工具
+- PositionMatchAgent 多节点 LangGraph 基础流
+- StudyPracticeAgent 多节点 LangGraph 基础流
+- 轻量知识库构建脚本
+- CSV/XLSX 岗位导入脚本
+- 可选参考模型复制脚本
 - Vue 3 前端工作台
 - Agent 最小测试
 
-尚未完整实现：
+本轮 1-9 步优化后新增/增强：
 
-- LangGraph 显式状态图
-- OpenAI-compatible LLM 调用
-- LLM 工厂
-- 三层兜底机制
-- Milvus RAG 检索服务
-- BGE-M3 embedding 接入
-- BGE-Reranker 接入
-- 岗位表 CSV/XLSX 文件解析导入
-- 前端多页面拆分和复杂交互
-- 完整日志、审计、异常追踪
-- 数据库 ORM model 层
+- 本地模型状态探测：可识别 BGE-M3、BGE-Reranker、classifier、finetuned classifier 是否存在。
+- Milvus RAG 链路：已提供 collection 初始化、知识库 chunk 构建、可选 dense+sparse hybrid search、可选 reranker 精排入口。
+- LangGraph Agent：两个 Agent 均为多节点图，支持画像累积、知识检索、联网检索、规则结果、LLM 解释、合规检查和节点级失败降级。
+- 个性化备考计划：不再固定四周模板，按考试日期、每日小时、每周天数、基础水平、薄弱模块、当前分数动态生成；少于 90 天会提示参考价值不足。
+- 练习长期分析：保存练习指标、申论维度分、错题记录，并提供阶段报告和错题查询。
+- 岗位匹配：增加专业目录标准化、相关专业核验、竞争比、招录人数、往年分数、地区偏好、风险偏好和政策依据。
+- 联网搜索：Tavily/DuckDuckGo 降级，搜索结果带 provider、domain、credibility、published_at、imported_at 和来源审计。
+- 前端工作台：增加匹配策略、政策依据展示、知识库状态/检索、练习历史/错题、统一错误提示。
+- 数据库层：增加 ORM model 映射、Alembic 骨架、导入审计表、知识库表、联网来源审计表和关键索引。
+- 安全合规：增加禁止承诺/伪造材料清洗、日志敏感信息脱敏和对应测试。
+- 测试体系：后端单元测试覆盖 Agent、RAG、图记忆、岗位匹配、导入解析、联网来源质量、数据库 schema、练习服务和合规模块；前端使用 TypeScript + Vite 构建验证。
+
+仍需依赖环境或后续增强：
+
+- 当前项目目录没有复制旧项目约 4.3GB 的完整 BGE-M3 / BGE-Reranker 模型文件；未放入模型前默认走关键词兜底。
+- Milvus hybrid search 和 reranker 精排代码已接入，但需要本地模型文件、Milvus 服务和 `ENABLE_LOCAL_MODELS=true`、`ENABLE_MILVUS_RAG=true` 才会进入生产链路。
+- LLM 工具调用目前由 LangGraph 节点编排工具调用，不是完整 ReAct AgentExecutor 自主选择工具。
+- 图记忆当前是进程内轻量状态；长期 checkpointer 可继续接 PostgreSQL/Redis。
+- 前端仍以一个工作台承载功能，后续可以拆成独立路由页面。
 
 ## 3. 技术栈
 
@@ -131,9 +150,15 @@ work_project/
         practice.py             # 练习批改
     agents/
       position_match/
-        agent.py                # 岗位匹配 Agent
+        state.py                # 岗位匹配图状态
+        nodes.py                # 岗位匹配图节点
+        graph.py                # 岗位匹配 LangGraph 编排
+        agent.py                # 岗位匹配规则与 LLM 解释能力
       study_practice/
-        agent.py                # 备考练习 Agent
+        state.py                # 备考练习图状态
+        nodes.py                # 备考练习图节点
+        graph.py                # 备考练习 LangGraph 编排
+        agent.py                # 备考练习规则与 LLM 批改能力
     core/
       orchestrator.py           # 简单 Agent 路由器
       responses.py              # 统一响应结构
@@ -173,8 +198,9 @@ work_project/
 
   scripts/
     init_db.sql                 # PostgreSQL 初始化 SQL
-    import_positions.py         # 岗位表导入脚本占位
-    build_knowledge_base.py     # 知识库构建脚本占位
+    import_positions.py         # CSV/XLSX 岗位表导入
+    build_knowledge_base.py     # 轻量知识库 chunk 构建
+    copy_reference_models.py    # 可选复制参考项目本地模型
 
   docs/                         # 设计文档
   docker-compose.yml            # PostgreSQL、Milvus、etcd、MinIO
@@ -315,10 +341,9 @@ POST /api/v1/positions/match
 
 当前限制：
 
-- `scripts/import_positions.py` 还只是占位
-- 暂不支持直接解析 CSV/XLSX 岗位表
+- XLSX 导入依赖运行环境安装 `openpyxl`
 - 专业目录只做字符串规则判断
-- 没有接公告政策 RAG
+- Milvus/BGE 生产级 RAG 仍需继续完善
 
 ### 6.4 Chat
 
@@ -338,15 +363,16 @@ POST /api/v1/chat
 当前能力：
 
 - 根据关键词判断用户问题属于岗位方向还是备考方向
-- 路由到对应 Agent 名称
-- 返回规则模板回答
+- 路由到对应 LangGraph Agent
+- 岗位类问题进入 `PositionMatchAgent` 图
+- 备考类问题进入 `StudyPracticeAgent` 图
+- 有 API Key 时由 LLM 基于图状态、知识库和工具结果生成回答
+- LLM 失败时回落到图内规则回答和三层兜底
 
 当前限制：
 
-- 未接入真实 LLM
-- 未接入 LangGraph
 - 未接入上下文记忆
-- 未接入 RAG 来源引用
+- 只有轻量知识库来源引用，尚未接入生产级 Milvus/BGE RAG 来源引用
 
 ### 6.5 Practice
 
@@ -386,6 +412,9 @@ POST /api/v1/practice/review
 文件：
 
 ```text
+backend/agents/position_match/state.py
+backend/agents/position_match/nodes.py
+backend/agents/position_match/graph.py
 backend/agents/position_match/agent.py
 ```
 
@@ -443,11 +472,37 @@ backend/agents/position_match/agent.py
 - 数据不足时提示人工核验
 - 强时效岗位信息必须保留来源
 
+LangGraph 节点流：
+
+```text
+parse_profile
+  -> ask_clarification 或 retrieve_positions
+  -> check_hard_conditions
+  -> retrieve_policy
+  -> rank_positions
+  -> generate_answer
+  -> compliance_check
+```
+
+节点职责：
+
+- `parse_profile`：从用户问题提取学历、专业、应届身份、政治面貌、年份、地区等信息。
+- `ask_clarification`：画像缺失严重时先追问，不强行匹配。
+- `retrieve_positions`：读取已导入岗位，或使用传入岗位列表。
+- `check_hard_conditions`：执行岗位硬性条件规则匹配。
+- `retrieve_policy`：检索本地知识库，必要时触发联网搜索。
+- `rank_positions`：生成冲、稳、保、不建议的结构化摘要。
+- `generate_answer`：有 API Key 时调用 LLM 解释匹配结果；失败时使用规则回答。
+- `compliance_check`：移除不合规承诺，补充官方审核免责声明。
+
 ### 7.2 StudyPracticeAgent
 
 文件：
 
 ```text
+backend/agents/study_practice/state.py
+backend/agents/study_practice/nodes.py
+backend/agents/study_practice/graph.py
 backend/agents/study_practice/agent.py
 ```
 
@@ -462,77 +517,119 @@ backend/agents/study_practice/agent.py
 当前能力：
 
 - 规则版练习批改
-- 规则版四周备考计划
+- 有 API Key 时使用 LLM 深度批改
+- 检索本地知识库片段作为上下文
+- 根据考试日期、每日学习时间、每周学习天数、基础水平、薄弱模块、目标岗位生成个性化计划
+- 备考计划最短按90天/13周起步，少于三个月会提示参考价值不足并压缩执行
+- 输出模块权重、阶段目标、周计划、每日模板、里程碑和动态调整规则
+- 根据近阶段练习记录生成阶段报告、均分、问题关键词和下一步建议
 - 按练习类型给出不同 next steps
 
 当前限制：
 
-- 没有真实 LLM
-- 没有知识库检索
 - 没有错题长期记忆
-- 没有 LangGraph 状态流
+- 已有多节点 LangGraph 基础流，尚未实现长期 checkpoint 记忆和节点级人工中断
+
+LangGraph 节点流：
+
+```text
+classify_task
+  -> retrieve_material
+  -> build_plan 或 review_answer
+  -> generate_response
+  -> compliance_check
+  -> save_learning_record
+```
+
+节点职责：
+
+- `classify_task`：判断用户是要计划、批改、面试建议还是普通问答。
+- `retrieve_material`：检索本地知识库片段作为上下文。
+- `build_plan`：生成个性化备考计划，按考试日期倒排并保证三个月起步。
+- `review_answer`：生成规则版练习批改。
+- `generate_response`：有 API Key 时调用 LLM 综合输出；失败时使用规则回答。
+- `compliance_check`：移除结果承诺和作弊风险表达，补充合规提示。
+- `save_learning_record`：预留图内保存节点，当前 API 层仍负责真实练习记录入库。
 
 ## 8. 当前兜底机制
 
-当前项目没有完整的“三层兜底机制”。
+当前项目已经实现三层兜底雏形，位置：
+
+```text
+backend/core/retry.py
+```
 
 已经存在的基础兜底：
 
-1. Agent 路由默认兜底
+1. 自动重试
+   - LLM、工具、Milvus 等可重试错误会按配置重试
+   - 配置项：`LLM_MAX_RETRIES`、`LLM_TIMEOUT_SECONDS`
+
+2. Agent 级降级
+   - `position_match` 失败时返回岗位规则匹配提示
+   - `study_practice` 失败时返回结构化备考建议
+
+3. 系统级兜底
+   - Agent 降级也失败时返回统一服务不可用提示
+   - 不向用户暴露内部异常细节
+
+4. Agent 路由默认兜底
    - `AgentOrchestrator.route()` 根据关键词判断 Agent
    - 无法识别时默认进入 `StudyPracticeAgent`
 
-2. 规则版 Agent 兜底
+5. 规则版 Agent 兜底
    - 当前两个 Agent 都不依赖 LLM
    - 即使没有模型 API key，也能返回基础结果
 
-3. 岗位资格不确定兜底
+6. 岗位资格不确定兜底
    - 数据不足或规则无法判断时，不强行给结论
    - 输出 `verification` 人工核验项
 
-尚未实现的三层兜底：
+仍需增强的兜底：
 
 1. LLM 层兜底
-   - 主模型失败后切备用模型
-   - 主 base_url 失败后切备用 base_url
-   - LLM 超时后降级短回答
+   - 已有 LLM 工厂和重试
+   - 仍需实现多个 provider/base_url 自动轮换
 
 2. Agent 层兜底
-   - LangGraph 节点失败后走备用节点
-   - 工具调用失败后返回结构化错误
-   - 多轮状态损坏后恢复到安全状态
+   - 已有 Agent 级降级文本
+   - 仍需做 LangGraph 节点级备用节点和状态恢复
 
 3. RAG 层兜底
-   - Milvus 不可用时走无检索回答
-   - embedding 失败时走关键词检索
-   - reranker 失败时直接使用召回结果
-   - 无来源时提示“资料不足，需人工核验”
+   - 已有本地关键词检索兜底
+   - 仍需实现 Milvus/BGE/reranker 的完整生产链路
 
 建议后续新增文件：
 
 ```text
-backend/core/retry.py
-backend/core/llm_factory.py
 backend/core/fallback.py
-backend/core/knowledge_base.py
-backend/core/reranker.py
-backend/agents/position_match/graph.py
-backend/agents/study_practice/graph.py
+backend/core/query_classifier.py
+backend/agents/position_match/tools.py
+backend/agents/study_practice/tools.py
 ```
 
 ## 9. 模型设计
 
 ### 9.1 当前模型状态
 
-当前项目尚未接入真实 LLM。
+当前项目已经具备真实 LLM 调用入口。
 
-当前回答来自：
+调用位置：
 
-- Python 规则判断
-- 固定模板
-- 简单关键词路由
+```text
+backend/core/llm_factory.py
+```
 
-因此当前不需要 `OPENAI_API_KEY` 也能跑基础功能。
+有 `OPENAI_API_KEY` 时：
+
+- `/api/v1/chat` 会优先调用 OpenAI-compatible LLM
+- 练习批改会优先调用 LLM 深度批改
+- 岗位匹配可使用 LLM 解释规则匹配结果
+
+没有 `OPENAI_API_KEY` 或 LLM 调用失败时：
+
+- 自动进入 retry / Agent fallback / system fallback
+- 规则版 Agent 继续提供基础能力
 
 ### 9.2 规划中的 LLM
 
@@ -557,14 +654,13 @@ OPENAI_MODEL=deepseek-chat
 - 兼容 OpenAI
 - 兼容其他 OpenAI-compatible 服务
 
-后续建议抽象：
+当前抽象：
 
 ```text
 LLMFactory
-  - get_chat_model()
-  - get_coder_model()
-  - get_fallback_model()
-  - clear_cache()
+  - ainvoke()
+  - _ainvoke_langchain()
+  - _ainvoke_http()
 ```
 
 ### 9.3 规划中的 embedding 和 rerank
@@ -595,8 +691,10 @@ BGE-Reranker
 当前状态：
 
 - 依赖已写入 `requirements.txt`
-- 脚本 `scripts/build_knowledge_base.py` 仍是占位
-- 后端尚未实现 Milvus collection 初始化和检索服务
+- `scripts/build_knowledge_base.py` 已支持无模型轻量 chunk 构建
+- 默认走本地关键词检索
+- 设置 `ENABLE_LOCAL_MODELS=true` 后才尝试本地模型/Milvus
+- 后端尚未实现完整 Milvus Hybrid Search 写入和 BGE-M3 embedding 入库
 
 ## 10. 数据库设计
 
@@ -898,6 +996,8 @@ backend/tests/test_agents.py
 
 - `PositionMatchAgent` 可以区分匹配岗位和风险岗位
 - `StudyPracticeAgent` 可以返回批改结构
+- 个性化备考计划会强制三个月起步，并按薄弱模块调整权重
+- `StudyPracticeAgent` LangGraph 计划流可以产出结构化计划
 
 运行：
 
@@ -931,14 +1031,14 @@ python -m pytest backend/tests
 3. 启动前端，验证工作台操作闭环
 4. 完成 CSV/XLSX 岗位表导入
 5. 增加岗位匹配规则字段和专业目录核验
-6. 引入 `LLMFactory`
-7. 引入 `retry` 和三层兜底
-8. 接入 LangGraph 状态图
-9. 接入 Milvus RAG
-10. 接入 BGE-M3 和 BGE-Reranker
+6. 增强 `LLMFactory` 的多 provider 自动切换
+7. 增强 LangGraph 节点级兜底和状态恢复
+8. 接入 Milvus RAG 写入、Hybrid Search 和来源引用
+9. 接入 BGE-M3 和 BGE-Reranker
+10. 增加 ReAct 工具调用规划
 11. 前端拆分真实页面
 12. 增加日志、异常处理、测试和权限控制
 
 ## 17. 当前项目一句话总结
 
-当前项目是一个“考公 AI 助手 MVP 工程骨架”：后端、前端、数据库表、基础 Agent 和主要业务接口已经搭好；现阶段以规则版 Agent 保证基本可用，尚未接入真实 LLM、RAG、LangGraph 和完整三层兜底机制。
+当前项目是一个“考公 AI 助手 MVP 工程骨架”：后端、前端、数据库表、基础 Agent 和主要业务接口已经搭好；现阶段以规则版 Agent 保证基础可用，并已加入 OpenAI-compatible LLM 入口、MCP 工具、轻量知识库检索、两个多节点 LangGraph Agent 基础流和三层兜底雏形。生产级 Milvus/BGE RAG、复杂 ReAct 工具规划、长期记忆和节点级恢复仍需继续增强。

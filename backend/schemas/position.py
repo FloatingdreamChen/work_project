@@ -13,6 +13,9 @@ class PositionCreate(BaseModel):
     position_name: str
     position_code: str | None = None
     recruitment_count: int | None = None
+    applicant_count: int | None = None
+    competition_ratio: float | None = None
+    previous_min_score: float | None = None
     education_requirement: str | None = None
     degree_requirement: str | None = None
     major_requirement: str | None = None
@@ -23,6 +26,7 @@ class PositionCreate(BaseModel):
     remarks: str | None = None
     source_name: str | None = None
     source_url: str | None = None
+    source_published_at: str | None = None
 
 
 class PositionOut(PositionCreate):
@@ -47,6 +51,8 @@ class PositionMatchRequest(BaseModel):
     exam_year: int | None = None
     exam_type: str | None = None
     province: str | None = None
+    preferred_regions: list[str] = []
+    risk_preference: str = Field(default="balanced", description="conservative/balanced/aggressive")
     limit: int = Field(default=20, ge=1, le=100)
 
 
@@ -57,6 +63,7 @@ class MatchItem(BaseModel):
     matched: list[str]
     risks: list[str]
     verification: list[str]
+    policy_basis: dict | None = None
     rationale: str
 
 
