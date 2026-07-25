@@ -11,4 +11,4 @@ orchestrator = AgentOrchestrator()
 
 @router.post("")
 async def chat(payload: ChatRequest) -> dict:
-    return ok(await orchestrator.chat(payload.message, payload.conversation_id))
+    return ok(await orchestrator.chat(payload.message, payload.conversation_id, payload.category_hint))

@@ -21,3 +21,10 @@ def test_init_db_contains_audit_and_search_indexes() -> None:
     assert "idx_current_sources_published" in sql
     assert "idx_practice_metrics_user_module" in sql
     assert "idx_knowledge_chunks_document" in sql
+    assert "CREATE TABLE IF NOT EXISTS conversation_memories" in sql
+    assert "idx_conversation_memories_updated" in sql
+    assert "email VARCHAR(255)" in sql
+    assert "role VARCHAR(40)" in sql
+    assert "login_attempts INTEGER" in sql
+    assert "refresh_token_hash VARCHAR(128)" in sql
+    assert "CREATE TABLE IF NOT EXISTS interview_sessions" in sql

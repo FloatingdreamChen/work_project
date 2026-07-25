@@ -8,6 +8,9 @@ class StudyPracticeState(TypedDict, total=False):
 
     user_message: str
     conversation_id: str | None
+    route_info: dict[str, Any]
+    recent_turns: list[dict[str, str]]
+    long_term_memory: dict[str, Any]
     practice_type: str
     task_type: str
     topic: str | None
@@ -36,5 +39,10 @@ class StudyPracticeState(TypedDict, total=False):
     structured_output: dict[str, Any]
     fallback_used: bool
     fallback_level: str | None
+    response_mode: str
+    fallback_reason: str | None
     compliance_warnings: list[str]
     node_errors: list[dict[str, str]]
+    needs_human_interrupt: bool
+    interrupt_reason: str | None
+    human_interrupt: bool

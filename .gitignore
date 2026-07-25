@@ -46,3 +46,7 @@ minio/
 *.crt
 secrets/
 private/
+
+#Models
+models/
+!models/*.py 

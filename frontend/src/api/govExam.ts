@@ -60,14 +60,31 @@ export interface MatchItem {
 export function login(username: string, password: string) {
   return unwrap<{
     access_token: string
+    refresh_token: string
     expires_in: number
+    refresh_expires_in: number
     user_id: string
     username: string
+    email?: string
+    role: string
   }>(apiClient.post('/auth/login', { username, password }))
 }
 
-export function register(username: string, password: string) {
-  return unwrap(apiClient.post('/auth/register', { username, password }))
+export function register(username: string, email: string, password: string) {
+  return unwrap(apiClient.post('/auth/register', { username, email, password, role: 'user' }))
+}
+
+export function refreshToken(refresh_token: string) {
+  return unwrap<{
+    access_token: string
+    refresh_token: string
+    expires_in: number
+    refresh_expires_in: number
+    user_id: string
+    username: string
+    email?: string
+    role: string
+  }>(apiClient.post('/auth/refresh', { refresh_token }))
 }
 
 export function getProfile() {
@@ -102,9 +119,30 @@ export function matchPositions(payload: {
   )
 }
 
-export function chat(message: string) {
-  return unwrap<{ answer: string; agent: string; sources: unknown[] }>(
-    apiClient.post('/chat', { message }),
+export interface ChatRoute {
+  source?: string
+  intent?: string | null
+  category?: string
+  category_label?: string
+  confidence?: number
+}
+
+export interface ChatResult {
+  answer: string
+  agent: string
+  sources: unknown[]
+  fallback_used?: boolean
+  fallback_level?: string | null
+  response_mode?: string | null
+  fallback_reason?: string | null
+  route?: ChatRoute | Record<string, unknown> | null
+  structured?: unknown
+  conversation_id?: string | null
+}
+
+export function chat(message: string, conversation_id?: string | null, category_hint?: string | null) {
+  return unwrap<ChatResult>(
+    apiClient.post('/chat', { message, conversation_id, category_hint }),
   )
 }
 
@@ -196,6 +234,7 @@ export function getKnowledgeStatus() {
   return unwrap<{
     models: Record<string, { exists: boolean; path: string; missing_files: string[]; size_mb: number }>
     vector_rag_ready: boolean
+    local_semantic_rag_ready: boolean
   }>(apiClient.get('/knowledge/status'))
 }
 

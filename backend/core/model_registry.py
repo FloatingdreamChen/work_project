@@ -21,8 +21,8 @@ class LocalModelRegistry:
     """Detect optional local model assets without loading heavy ML libraries."""
 
     REQUIRED = {
-        "bge_m3": ["config.json", "tokenizer.json"],
-        "reranker": ["config.json", "tokenizer.json"],
+        "bge_m3": ["config.json", "tokenizer.json", "sentencepiece.bpe.model"],
+        "reranker": ["config.json", "tokenizer.json", "sentencepiece.bpe.model"],
         "classifier": ["config.json", "tokenizer.json"],
         "finetuned_classifier": ["config.json", "tokenizer.json"],
     }
@@ -50,6 +50,12 @@ class LocalModelRegistry:
             resolved = PROJECT_ROOT / resolved
         required = cls.REQUIRED[name]
         missing = [file_name for file_name in required if not (resolved / file_name).exists()]
+        has_weights = any(
+            (resolved / file_name).exists()
+            for file_name in ("model.safetensors", "pytorch_model.bin")
+        )
+        if not has_weights:
+            missing.append("model.safetensors 或 pytorch_model.bin")
         exists = resolved.exists() and not missing
         return LocalModelStatus(
             name=name,

@@ -1,8 +1,125 @@
+import json
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class PracticeService:
+    def empty_report(self, days: int = 30) -> dict:
+        return {
+            "days": days,
+            "practice_count": 0,
+            "by_type": {},
+            "by_module": {},
+            "average_score": None,
+            "top_problem_keywords": [],
+            "suggestions": ["近阶段暂无练习记录，建议先生成备考计划，并从行测、申论各完成一次基线测试。"],
+            "recent": [],
+        }
+
+    async def start_interview_session(
+        self,
+        db: AsyncSession,
+        user_id: str,
+        target_position: str | None,
+        topic: str,
+    ) -> dict:
+        first_question = self._first_interview_question(topic, target_position)
+        result = await db.execute(
+            text(
+                """
+                INSERT INTO interview_sessions (user_id, target_position, stage, turns, summary)
+                VALUES (:user_id, :target_position, 'warmup', CAST(:turns AS JSONB), :summary)
+                RETURNING id, stage, turns, summary
+                """
+            ),
+            {
+                "user_id": user_id,
+                "target_position": target_position,
+                "turns": json.dumps(
+                    [{"role": "assistant", "question": first_question, "stage": "warmup"}],
+                    ensure_ascii=False,
+                ),
+                "summary": f"主题：{topic}",
+            },
+        )
+        await db.commit()
+        row = result.mappings().one()
+        return {
+            "session_id": str(row["id"]),
+            "stage": row["stage"],
+            "turn_count": 0,
+            "current_question": first_question,
+            "summary": row["summary"],
+        }
+
+    async def add_interview_turn(
+        self,
+        db: AsyncSession,
+        user_id: str,
+        session_id: str,
+        user_answer: str,
+        question: str | None,
+        review: dict,
+    ) -> dict:
+        result = await db.execute(
+            text(
+                """
+                SELECT id, turns, stage, summary
+                FROM interview_sessions
+                WHERE id = :session_id AND user_id = :user_id
+                LIMIT 1
+                """
+            ),
+            {"session_id": session_id, "user_id": user_id},
+        )
+        row = result.mappings().first()
+        if not row:
+            raise ValueError("面试会话不存在")
+
+        turns = list(row["turns"] or [])
+        stage = self._next_interview_stage(len([turn for turn in turns if turn.get("role") == "user"]) + 1)
+        follow_up = review.get("follow_up_question") or self._fallback_follow_up(stage, user_answer)
+        turns.append(
+            {
+                "role": "user",
+                "question": question,
+                "answer": user_answer,
+                "review": review,
+                "stage": row["stage"],
+            }
+        )
+        turns.append({"role": "assistant", "question": follow_up, "stage": stage})
+        summary = self._summarize_interview(row.get("summary"), turns)
+        await db.execute(
+            text(
+                """
+                UPDATE interview_sessions
+                SET turns = CAST(:turns AS JSONB),
+                    stage = :stage,
+                    summary = :summary,
+                    updated_at = NOW()
+                WHERE id = :session_id
+                """
+            ),
+            {
+                "turns": json.dumps(turns, ensure_ascii=False, default=str),
+                "stage": stage,
+                "summary": summary,
+                "session_id": session_id,
+            },
+        )
+        await db.commit()
+        return {
+            "session_id": session_id,
+            "stage": stage,
+            "turn_count": len([turn for turn in turns if turn.get("role") == "user"]),
+            "current_question": follow_up,
+            "follow_up_question": follow_up,
+            "review": review,
+            "summary": summary,
+        }
+
     async def save_review(
         self,
         db: AsyncSession,
@@ -253,3 +370,28 @@ class PracticeService:
         if "审题" in problem_keywords:
             suggestions.append("审题问题反复出现，做题前先圈定问法、对象、限制条件。")
         return suggestions or ["练习节奏基本稳定，下一阶段提高套题限时比例并保留周复盘。"]
+
+    def _first_interview_question(self, topic: str, target_position: str | None) -> str:
+        target = f"报考{target_position}时，" if target_position else ""
+        return f"{target}请围绕“{topic}”谈谈你的理解和处理思路。"
+
+    def _next_interview_stage(self, user_turn_count: int) -> str:
+        if user_turn_count <= 1:
+            return "follow_up"
+        if user_turn_count <= 3:
+            return "pressure"
+        return "summary"
+
+    def _fallback_follow_up(self, stage: str, user_answer: str) -> str:
+        if stage == "follow_up":
+            return "请结合一个具体场景，补充你会如何协调资源并推动落实。"
+        if stage == "pressure":
+            return "如果群众不理解、现场压力较大，你会如何调整沟通方式？"
+        return "请用一分钟总结你的答题结构，并说明下一次会重点改进什么。"
+
+    def _summarize_interview(self, prior_summary: str | None, turns: list[dict]) -> str:
+        user_turns = [turn for turn in turns if turn.get("role") == "user"]
+        latest_problems = []
+        for turn in user_turns[-3:]:
+            latest_problems.extend((turn.get("review") or {}).get("problems", [])[:2])
+        return f"{prior_summary or ''}；已完成{len(user_turns)}轮；近期问题：{'、'.join(latest_problems) or '暂无明显问题'}"

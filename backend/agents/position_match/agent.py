@@ -74,6 +74,8 @@ class PositionMatchAgent:
         rule_result: dict[str, Any] | None = None,
         knowledge: list[dict[str, Any]] | None = None,
         web_results: list[dict[str, Any]] | None = None,
+        recent_turns: list[dict[str, str]] | None = None,
+        long_term_memory: dict[str, Any] | None = None,
     ) -> str:
         """Ask the configured LLM to explain the rule result with compliance constraints."""
         result = rule_result or self.match(profile, positions)
@@ -95,6 +97,8 @@ class PositionMatchAgent:
         )
         user_content = (
             f"用户画像：{profile}\n"
+            f"长期记忆：{long_term_memory or {}}\n"
+            f"最近对话：{recent_turns or []}\n"
             f"规则匹配结果：{compact_items}\n"
             f"知识库片段：{knowledge or []}\n"
             f"联网结果：{web_results or []}\n"

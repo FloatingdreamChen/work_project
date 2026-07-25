@@ -24,7 +24,7 @@ SENSITIVE_KEYS = {
 }
 
 ID_CARD_PATTERN = re.compile(r"\b\d{6}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b")
-PHONE_PATTERN = re.compile(r"\b1[3-9]\d{9}\b")
+PHONE_PATTERN = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 TOKEN_PATTERN = re.compile(r"(?i)(bearer\s+)[a-z0-9._\-]+")
 
 

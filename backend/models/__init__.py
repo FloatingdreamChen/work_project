@@ -1,5 +1,6 @@
 from backend.models.base import Base
 from backend.models.knowledge import KnowledgeChunk, KnowledgeDocument
+from backend.models.memory import ConversationMemory
 from backend.models.position import Position, PositionImportAudit, PositionMatchReport
 from backend.models.practice import (
     EssayDimensionScore,
@@ -16,6 +17,7 @@ from backend.models.user import User
 __all__ = [
     "Base",
     "CurrentInformationSource",
+    "ConversationMemory",
     "EssayDimensionScore",
     "InterviewSession",
     "KnowledgeChunk",

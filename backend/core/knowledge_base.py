@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -98,12 +100,123 @@ class LocalKeywordKnowledgeStore:
         return tokens
 
 
+class LocalSemanticKnowledgeStore:
+    """BGE-M3 local dense retrieval fallback when Milvus is not available."""
+
+    def __init__(self, keyword_store: LocalKeywordKnowledgeStore | None = None) -> None:
+        self.keyword_store = keyword_store or LocalKeywordKnowledgeStore()
+        self.cache_path = PROJECT_ROOT / "data" / "rag_embedding_cache.jsonl"
+
+    def search(self, query: str, top_k: int = 3) -> list[KnowledgeDocument]:
+        docs = self.keyword_store._load()
+        if not docs:
+            return []
+        embeddings = self._load_or_build_embeddings(docs)
+        query_dense, _ = BGEM3Embedder.get_instance().encode_query(query)
+        scored: list[KnowledgeDocument] = []
+        for index, doc in enumerate(docs):
+            embedding = embeddings.get(self._doc_key(doc, index))
+            if not embedding:
+                continue
+            score = self._cosine(query_dense, embedding)
+            if score <= 0:
+                continue
+            metadata = {**(doc.metadata or {}), "retriever": "local_bge_m3_dense"}
+            scored.append(
+                KnowledgeDocument(
+                    content=doc.content,
+                    source_name=doc.source_name,
+                    score=score,
+                    metadata=metadata,
+                )
+            )
+        scored.sort(key=lambda item: item.score, reverse=True)
+        candidates = scored[: max(top_k * 4, top_k)]
+        return self._rerank(query, candidates, top_k)
+
+    def _load_or_build_embeddings(self, docs: list[KnowledgeDocument]) -> dict[str, list[float]]:
+        cached = self._read_cache()
+        missing = [
+            (index, doc)
+            for index, doc in enumerate(docs)
+            if self._doc_key(doc, index) not in cached
+        ]
+        if missing:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            embedder = BGEM3Embedder.get_instance()
+            dense_vecs, _ = embedder.encode([doc.content for _, doc in missing])
+            with self.cache_path.open("a", encoding="utf-8") as fp:
+                for (index, doc), embedding in zip(missing, dense_vecs, strict=False):
+                    row = {
+                        "key": self._doc_key(doc, index),
+                        "source_name": doc.source_name,
+                        "content_hash": hashlib.md5(doc.content.encode("utf-8")).hexdigest(),
+                        "embedding": embedding,
+                    }
+                    fp.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    cached[row["key"]] = embedding
+        return cached
+
+    def _read_cache(self) -> dict[str, list[float]]:
+        if not self.cache_path.exists():
+            return {}
+        cached: dict[str, list[float]] = {}
+        for line in self.cache_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            embedding = row.get("embedding")
+            if isinstance(embedding, list):
+                cached[str(row.get("key"))] = [float(value) for value in embedding]
+        return cached
+
+    def _rerank(self, query: str, docs: list[KnowledgeDocument], top_k: int) -> list[KnowledgeDocument]:
+        if not docs or not LocalModelRegistry.ready_for_vector_rag():
+            return docs[:top_k]
+        try:
+            from backend.core.reranker import BGEReranker
+
+            documents = [
+                {"content": doc.content, "metadata": {"source_name": doc.source_name, **(doc.metadata or {})}}
+                for doc in docs
+            ]
+            ranked, _ = BGEReranker.get_instance().rerank_with_confidence(query, documents, top_k=top_k)
+            return [
+                KnowledgeDocument(
+                    content=item.content,
+                    source_name=item.metadata.get("source_name", "知识库"),
+                    score=item.score,
+                    metadata={**item.metadata, "retriever": "local_bge_m3_dense_reranked"},
+                )
+                for item in ranked
+            ]
+        except Exception as exc:
+            logger.warning("knowledge.local_rerank_failed | error=%s", exc)
+            return docs[:top_k]
+
+    def _doc_key(self, doc: KnowledgeDocument, index: int) -> str:
+        digest = hashlib.md5(doc.content.encode("utf-8")).hexdigest()
+        return f"{doc.source_name}:{index}:{digest}"
+
+    def _cosine(self, left: list[float], right: list[float]) -> float:
+        numerator = sum(a * b for a, b in zip(left, right, strict=False))
+        left_norm = math.sqrt(sum(a * a for a in left))
+        right_norm = math.sqrt(sum(b * b for b in right))
+        if left_norm == 0 or right_norm == 0:
+            return 0.0
+        return numerator / (left_norm * right_norm)
+
+
 class KnowledgeBaseClient:
     """Knowledge retrieval with optional local BGE/Milvus and keyword fallback."""
 
     def __init__(self) -> None:
         self.settings = get_settings()
         self.local_store = LocalKeywordKnowledgeStore()
+        self.semantic_store = LocalSemanticKnowledgeStore(self.local_store)
 
     async def search(self, query: str, top_k: int = 3) -> list[dict[str, Any]]:
         if self.settings.enable_local_models and self.settings.enable_milvus_rag:
@@ -112,18 +225,40 @@ class KnowledgeBaseClient:
             except Exception as exc:
                 logger.warning("knowledge.milvus_failed | error=%s", exc)
 
+        if self.settings.enable_local_models and self.settings.enable_local_semantic_rag:
+            try:
+                docs = await self._search_local_semantic(query, top_k)
+                if docs:
+                    return self._format_docs(docs, high_confidence_threshold=0.62)
+            except Exception as exc:
+                logger.warning("knowledge.local_semantic_failed | error=%s", exc)
+
         docs = self.local_store.search(query, top_k=top_k)
+        return self._format_docs(docs, high_confidence_threshold=8.0, keyword_mode=True)
+
+    def _format_docs(
+        self,
+        docs: list[KnowledgeDocument],
+        *,
+        high_confidence_threshold: float,
+        keyword_mode: bool = False,
+    ) -> list[dict[str, Any]]:
         return [
             {
                 "content": doc.content,
                 "source_name": doc.source_name,
                 "score": doc.score,
-                "confidence": min(0.74, doc.score / 10) if doc.score else 0.0,
-                "is_high_confidence": False,
+                "confidence": self._confidence(doc.score, keyword_mode=keyword_mode),
+                "is_high_confidence": doc.score >= high_confidence_threshold,
                 "metadata": doc.metadata or {},
             }
             for doc in docs
         ]
+
+    def _confidence(self, score: float, *, keyword_mode: bool) -> float:
+        if keyword_mode:
+            return min(0.74, score / 10) if score else 0.0
+        return max(0.0, min(0.95, (score + 1) / 2))
 
     async def _search_milvus(self, query: str, top_k: int) -> list[dict[str, Any]]:
         """Optional heavy path. Requires local BGE/Reranker models and Milvus."""
@@ -131,6 +266,12 @@ class KnowledgeBaseClient:
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: self._search_milvus_sync(query, top_k))
+
+    async def _search_local_semantic(self, query: str, top_k: int) -> list[KnowledgeDocument]:
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: self.semantic_store.search(query, top_k))
 
     def _search_milvus_sync(self, query: str, top_k: int) -> list[dict[str, Any]]:
         if not LocalModelRegistry.ready_for_vector_rag():

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.agents.study_practice import StudyPracticeAgent
@@ -6,7 +6,14 @@ from backend.agents.study_practice.graph import build_study_practice_graph
 from backend.core.responses import ok
 from backend.db.session import get_db
 from backend.dependencies import get_current_user
-from backend.schemas.practice import PracticeReviewRequest, StudyPlanRequest, StudyReportRequest, WrongQuestionQuery
+from backend.schemas.practice import (
+    InterviewStartRequest,
+    InterviewTurnRequest,
+    PracticeReviewRequest,
+    StudyPlanRequest,
+    StudyReportRequest,
+    WrongQuestionQuery,
+)
 from backend.services.practice_service import PracticeService
 
 
@@ -61,6 +68,43 @@ async def review_practice(
     return ok(result)
 
 
+@router.post("/interview/start")
+async def start_interview(
+    payload: InterviewStartRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return ok(
+        await service.start_interview_session(
+            db,
+            current_user["id"],
+            payload.target_position,
+            payload.topic,
+        )
+    )
+
+
+@router.post("/interview/turn")
+async def interview_turn(
+    payload: InterviewTurnRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    review = agent.review_answer("面试", payload.user_answer, topic="面试追问", question=payload.question)
+    try:
+        result = await service.add_interview_turn(
+            db,
+            current_user["id"],
+            payload.session_id,
+            payload.user_answer,
+            payload.question,
+            review,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return ok(result)
+
+
 @router.post("/plan")
 async def build_study_plan(
     payload: StudyPlanRequest,
@@ -101,7 +145,10 @@ async def study_report(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    report = await service.build_report(db, current_user["id"], days=payload.days)
+    try:
+        report = await service.build_report(db, current_user["id"], days=payload.days)
+    except Exception:
+        report = service.empty_report(payload.days)
     return ok(report)
 
 

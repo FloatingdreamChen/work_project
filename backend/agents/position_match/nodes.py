@@ -92,6 +92,7 @@ async def ask_clarification_node(state: PositionMatchState) -> dict[str, Any]:
     return {
         "clarification_question": question,
         "answer": question,
+        "response_mode": "local_rule",
         "structured_output": {
             "needs_clarification": True,
             "missing_fields": missing,
@@ -164,12 +165,21 @@ async def generate_answer_node(state: PositionMatchState) -> dict[str, Any]:
             rule_result=state.get("rule_result"),
             knowledge=state.get("knowledge", []),
             web_results=state.get("web_results", []),
+            recent_turns=state.get("recent_turns", []),
+            long_term_memory=state.get("long_term_memory", {}),
         )
-        return {"answer": answer, "fallback_used": False, "fallback_level": None}
+        return {"answer": answer, "fallback_used": False, "fallback_level": None, "response_mode": "llm"}
     except Exception as exc:
         logger.warning("position_graph.llm_failed | error=%s", exc)
+        reason = "LLM 连接失败，已切换为本地岗位规则兜底。"
         answer = _rule_answer(state)
-        return {"answer": answer, "fallback_used": True, "fallback_level": "graph_rule"}
+        return {
+            "answer": f"{reason}以下内容只基于已导入岗位数据和硬性条件规则生成，涉及资格边界请人工核验。\n\n{answer}",
+            "fallback_used": True,
+            "fallback_level": "graph_rule",
+            "response_mode": "fallback_rule",
+            "fallback_reason": reason,
+        }
 
 
 async def compliance_check_node(state: PositionMatchState) -> dict[str, Any]:
@@ -182,6 +192,9 @@ async def compliance_check_node(state: PositionMatchState) -> dict[str, Any]:
         "rule_result": state.get("rule_result", {}),
         "sources": state.get("sources", []),
         "fallback_used": state.get("fallback_used", False),
+        "fallback_level": state.get("fallback_level"),
+        "response_mode": state.get("response_mode"),
+        "fallback_reason": state.get("fallback_reason"),
     }
     return {
         "answer": answer,

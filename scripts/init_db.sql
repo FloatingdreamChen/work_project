@@ -3,11 +3,28 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     username VARCHAR(80) UNIQUE NOT NULL,
+    email VARCHAR(255),
     hashed_password VARCHAR(255) NOT NULL,
+    role VARCHAR(40) NOT NULL DEFAULT 'user',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    login_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ,
+    last_login_at TIMESTAMPTZ,
+    refresh_token_hash VARCHAR(128),
+    refresh_token_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(40) NOT NULL DEFAULT 'user';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS login_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS refresh_token_hash VARCHAR(128);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS refresh_token_expires_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(email) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 
 CREATE TABLE IF NOT EXISTS user_profiles (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -55,6 +72,16 @@ CREATE TABLE IF NOT EXISTS positions (
     source_published_at TIMESTAMPTZ,
     imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS applicant_count INTEGER;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS competition_ratio NUMERIC(8, 2);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS previous_min_score NUMERIC(6, 2);
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS degree_requirement TEXT;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS grassroots_requirement TEXT;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS work_years_requirement TEXT;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS household_requirement TEXT;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS source_url TEXT;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS source_published_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_positions_exam ON positions(exam_year, exam_type);
 CREATE INDEX IF NOT EXISTS idx_positions_region ON positions(province, city);
@@ -197,3 +224,15 @@ CREATE TABLE IF NOT EXISTS current_information_sources (
 CREATE INDEX IF NOT EXISTS idx_current_sources_url ON current_information_sources(url);
 CREATE INDEX IF NOT EXISTS idx_current_sources_imported ON current_information_sources(imported_at DESC);
 CREATE INDEX IF NOT EXISTS idx_current_sources_published ON current_information_sources(published_at DESC);
+
+CREATE TABLE IF NOT EXISTS conversation_memories (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    conversation_id VARCHAR(120) NOT NULL UNIQUE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    state JSONB NOT NULL DEFAULT '{}'::jsonb,
+    summary TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_memories_updated ON conversation_memories(updated_at DESC);

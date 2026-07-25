@@ -126,7 +126,12 @@
       <div class="tool-card">
         <div class="card-head">
           <h2>AI 问答</h2>
-          <el-tag effect="plain">{{ chatAgent || '自动路由' }}</el-tag>
+          <div class="chat-tags">
+            <el-tag effect="plain">{{ chatAgent || '自动路由' }}</el-tag>
+            <el-tag :type="chatFallbackTagType" effect="plain">{{ chatFallbackLabel }}</el-tag>
+            <el-tag v-if="chatRouteLabel" type="info" effect="plain">{{ chatRouteLabel }}</el-tag>
+            <el-tag v-if="chatSourcesCount" type="success" effect="plain">来源 {{ chatSourcesCount }}</el-tag>
+          </div>
         </div>
         <el-input
           v-model="chatMessage"
@@ -134,8 +139,17 @@
           :rows="4"
           placeholder="例如：我计算机专业，2027 应届，可以报哪些国考岗位？"
         />
+        <div v-if="chatQuestionCategoryLabel" class="chat-category">
+          <span>问题分类</span>
+          <el-tag type="info" effect="plain">{{ chatQuestionCategoryLabel }}</el-tag>
+        </div>
         <el-button type="primary" :loading="chatting" @click="handleChat">发送</el-button>
         <p v-if="chatAnswer" class="answer-box">{{ chatAnswer }}</p>
+        <div v-if="chatRouteLabel || chatFallbackLevel || chatFallbackReason || chatSourcesCount" class="chat-meta">
+          <span>{{ chatRouteLabel || '关键词路由' }}</span>
+          <span>{{ chatFallbackReason || (chatFallbackLevel ? `降级层级：${chatFallbackLevel}` : '未触发降级') }}</span>
+          <span>会话：{{ chatConversationId }}</span>
+        </div>
       </div>
 
       <div class="tool-card">
@@ -245,6 +259,9 @@
           <el-tag :type="knowledgeStatus?.vector_rag_ready ? 'success' : 'warning'">
             {{ knowledgeStatus?.vector_rag_ready ? '向量 RAG 就绪' : '关键词兜底' }}
           </el-tag>
+          <el-tag :type="knowledgeStatus?.local_semantic_rag_ready ? 'success' : 'info'">
+            {{ knowledgeStatus?.local_semantic_rag_ready ? '本地语义 RAG 就绪' : '本地语义未就绪' }}
+          </el-tag>
         </div>
         <div class="status-grid">
           <div v-for="[name, item] in modelEntries" :key="name">
@@ -315,6 +332,7 @@ import {
   type MatchItem,
   type Position,
   type Profile,
+  type ChatRoute,
 } from '@/api/govExam'
 
 const profile = reactive<Profile>({
@@ -350,6 +368,13 @@ const reviewing = ref(false)
 const chatMessage = ref('我计算机专业，2027 应届，可以报哪些国考岗位？')
 const chatAnswer = ref('')
 const chatAgent = ref('')
+const chatConversationId = ref(localStorage.getItem('chat_conversation_id') || createConversationId())
+const chatFallbackUsed = ref(false)
+const chatFallbackLevel = ref<string | null>(null)
+const chatResponseMode = ref<string | null>(null)
+const chatFallbackReason = ref<string | null>(null)
+const chatRoute = ref<ChatRoute | Record<string, unknown> | null>(null)
+const chatSourcesCount = ref(0)
 const practice = reactive({
   practice_type: '申论',
   module_name: '申论-小题',
@@ -371,6 +396,49 @@ const knowledgeQuery = ref('应届生身份认定')
 const knowledgeResults = ref<Awaited<ReturnType<typeof searchKnowledge>>>([])
 const wrongQuestions = ref<Array<Record<string, unknown>>>([])
 const modelEntries = computed(() => Object.entries(knowledgeStatus.value?.models || {}))
+const chatFallbackLabel = computed(() => {
+  if (!chatAnswer.value && !chatting.value) return '待发送'
+  if (chatResponseMode.value === 'llm') return 'LLM回答'
+  if (chatResponseMode.value === 'local_rule') return '本地规则'
+  if (chatResponseMode.value === 'fallback_rule') return '模型降级'
+  if (chatResponseMode.value === 'system_fallback') return '系统降级'
+  if (chatResponseMode.value === 'human_interrupt') return '人工中断'
+  if (chatResponseMode.value === 'frontend_error') return '前端错误'
+  if (chatFallbackUsed.value) return '模型降级'
+  return 'Agent回答'
+})
+const chatFallbackTagType = computed(() => {
+  if (chatResponseMode.value === 'system_fallback' || chatResponseMode.value === 'frontend_error') return 'danger'
+  if (chatResponseMode.value === 'fallback_rule' || chatFallbackUsed.value) return 'warning'
+  if (chatResponseMode.value === 'local_rule') return 'info'
+  if (chatAnswer.value) return 'success'
+  return 'info'
+})
+const chatRouteLabel = computed(() => {
+  const route = chatRoute.value
+  if (!route) return ''
+  const source = typeof route.source === 'string' ? route.source : ''
+  const intent = typeof route.intent === 'string' ? route.intent : ''
+  const confidence = typeof route.confidence === 'number' ? ` ${Math.round(route.confidence * 100)}%` : ''
+  if (intent) return `${intent}${confidence}`
+  return source ? source : ''
+})
+const chatQuestionCategoryLabel = computed(() => {
+  const route = chatRoute.value
+  if (!route) return ''
+  if (typeof route.category_label === 'string') return route.category_label
+  const labels: Record<string, string> = {
+    daily_chat: '日常问答',
+    position_match: '岗位匹配',
+    study_plan: '备考计划',
+    practice_review: '练习批改',
+    interview: '面试模拟',
+    knowledge_qa: '知识问答',
+    question_optimize: '问题优化',
+    fuzzy_query: '模糊查询',
+  }
+  return typeof route.category === 'string' ? labels[route.category] || route.category : ''
+})
 const moduleOptions = ['行测-常识', '行测-言语理解', '行测-数量关系', '行测-判断推理', '行测-资料分析', '申论-材料阅读', '申论-小题', '申论-大作文', '面试-表达与素材']
 const planForm = reactive({
   exam_date: '2027-11-28',
@@ -432,8 +500,12 @@ onMounted(async () => {
     Object.assign(profile, saved)
     await handleLoadPositions()
     await handleKnowledgeStatus()
-  } catch {
-    ElMessage.warning('暂未连接后端或尚未初始化画像')
+  } catch (error) {
+    if (isUnauthorized(error)) {
+      ElMessage.warning('登录已过期，请重新登录')
+    } else {
+      ElMessage.warning('暂未连接后端或尚未初始化画像')
+    }
   }
 })
 
@@ -491,12 +563,41 @@ function splitRegions(value: string) {
     .filter(Boolean)
 }
 
+function createConversationId() {
+  const randomUUID = globalThis.crypto?.randomUUID
+  if (typeof randomUUID === 'function') {
+    return `web-${randomUUID.call(globalThis.crypto)}`
+  }
+  const randomPart = Math.random().toString(36).slice(2, 10)
+  return `web-${Date.now().toString(36)}-${randomPart}`
+}
+
 async function handleChat() {
   chatting.value = true
   try {
-    const result = await chat(chatMessage.value)
-    chatAnswer.value = result.answer
+    localStorage.setItem('chat_conversation_id', chatConversationId.value)
+    const result = await chat(chatMessage.value, chatConversationId.value)
+    chatAnswer.value = result.answer || '暂未生成回答，请稍后重试。'
     chatAgent.value = result.agent
+    chatFallbackUsed.value = Boolean(result.fallback_used)
+    chatFallbackLevel.value = result.fallback_level || null
+    chatResponseMode.value = result.response_mode || null
+    chatFallbackReason.value = result.fallback_reason || null
+    chatRoute.value = result.route || null
+    chatSourcesCount.value = result.sources?.length || 0
+    if (result.conversation_id) {
+      chatConversationId.value = result.conversation_id
+      localStorage.setItem('chat_conversation_id', result.conversation_id)
+    }
+  } catch (error) {
+    showError(error, 'AI 问答失败')
+    chatAnswer.value = 'AI 问答暂时不可用，已保留你的问题。请检查后端 LLM 配置、网络或稍后重试。'
+    chatFallbackUsed.value = true
+    chatFallbackLevel.value = 'frontend'
+    chatResponseMode.value = 'frontend_error'
+    chatFallbackReason.value = '前端请求失败，请确认后端服务已启动且登录状态有效。'
+    chatRoute.value = null
+    chatSourcesCount.value = 0
   } finally {
     chatting.value = false
   }
@@ -579,6 +680,15 @@ async function handleLoadWrongQuestions() {
 function showError(error: unknown, fallback: string) {
   pageError.value = error instanceof Error ? error.message : fallback
   ElMessage.error(fallback)
+}
+
+function isUnauthorized(error: unknown) {
+  return Boolean(
+    typeof error === 'object' &&
+      error !== null &&
+      'response' in error &&
+      (error as { response?: { status?: number } }).response?.status === 401,
+  )
 }
 
 function tierType(tier: string) {

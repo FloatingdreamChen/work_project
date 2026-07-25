@@ -16,6 +16,25 @@ def test_conversation_state_store_merges_profile() -> None:
     assert state["profile"]["major"] == "计算机"
 
 
+def test_conversation_state_store_async_keeps_turns_and_redacts() -> None:
+    ConversationStateStore.clear()
+    asyncio.run(
+        ConversationStateStore.save_async(
+            "c-memory",
+            {"profile": {"education": "本科"}, "recent_turns": []},
+            user_message="我的手机号是13812345678",
+            assistant_answer="已记录你的学习偏好",
+        )
+    )
+
+    state = asyncio.run(ConversationStateStore.load_async("c-memory"))
+
+    assert state["profile"]["education"] == "本科"
+    assert len(state["recent_turns"]) == 2
+    assert "13812345678" not in state["recent_turns"][0]["content"]
+    assert state["long_term_memory"]["profile"]["education"] == "本科"
+
+
 def test_position_graph_accumulates_profile_from_prior_state() -> None:
     graph = build_position_match_graph()
     first = asyncio.run(graph.ainvoke({"user_message": "我是本科计算机专业", "conversation_id": "c2"}))

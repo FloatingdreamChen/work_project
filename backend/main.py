@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.router import api_router
 from backend.config import get_settings
+from backend.core.concurrency import ConcurrencyLimiter, configure_loop_executor
 from backend.core.logger import configure_logging, get_logger
 
 
@@ -14,6 +15,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging("DEBUG" if settings.debug else "INFO")
+    configure_loop_executor()
     logger = get_logger(__name__)
     logger.info("app.starting | env=%s", settings.app_env)
     try:
@@ -42,10 +44,12 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
+    allow_origin_regex=r"^http://(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}):(3000|5173)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.middleware("http")(ConcurrencyLimiter(settings.request_concurrency_limit))
 
 app.include_router(api_router, prefix="/api/v1")
 

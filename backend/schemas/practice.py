@@ -66,3 +66,24 @@ class StudyReportRequest(BaseModel):
 class WrongQuestionQuery(BaseModel):
     status: str | None = Field(default=None)
     limit: int = Field(default=20, ge=1, le=100)
+
+
+class InterviewStartRequest(BaseModel):
+    target_position: str | None = None
+    topic: str = Field(default="综合分析")
+
+
+class InterviewTurnRequest(BaseModel):
+    session_id: str
+    user_answer: str = Field(..., min_length=1)
+    question: str | None = None
+
+
+class InterviewTurnResult(BaseModel):
+    session_id: str
+    stage: str
+    turn_count: int
+    current_question: str
+    follow_up_question: str | None = None
+    review: dict | None = None
+    summary: str | None = None

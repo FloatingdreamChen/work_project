@@ -27,10 +27,22 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效登录")
 
     result = await db.execute(
-        text("SELECT id, username, is_active FROM users WHERE id = :id"),
+        text("SELECT id, username, email, role, is_active FROM users WHERE id = :id"),
         {"id": user_id},
     )
     row = result.mappings().first()
     if not row or not row["is_active"]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号不可用")
-    return {"id": str(row["id"]), "username": row["username"]}
+    return {"id": str(row["id"]), "username": row["username"], "email": row["email"], "role": row["role"]}
+
+
+def require_role(*roles: str):
+    async def dependency(current_user: dict = Depends(get_current_user)) -> dict:
+        if current_user.get("role") not in set(roles):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+        return current_user
+
+    return dependency
+
+
+get_current_admin = require_role("admin")

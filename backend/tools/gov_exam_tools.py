@@ -1,13 +1,33 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from backend.core.knowledge_base import KnowledgeBaseClient
+from backend.config import get_settings
+from backend.core.knowledge_base import KnowledgeBaseClient, LocalKeywordKnowledgeStore
 
 
 async def search_knowledge(query: str, top_k: int = 3) -> list[dict[str, Any]]:
     """Search policy/project knowledge with local keyword fallback."""
-    return await KnowledgeBaseClient().search(query, top_k=top_k)
+    settings = get_settings()
+    try:
+        return await asyncio.wait_for(
+            KnowledgeBaseClient().search(query, top_k=top_k),
+            timeout=settings.rag_timeout_seconds,
+        )
+    except Exception:
+        docs = LocalKeywordKnowledgeStore().search(query, top_k=top_k)
+        return [
+            {
+                "content": doc.content,
+                "source_name": doc.source_name,
+                "score": doc.score,
+                "confidence": min(0.7, doc.score / 10) if doc.score else 0.0,
+                "is_high_confidence": False,
+                "metadata": {**(doc.metadata or {}), "retriever": "keyword_timeout_fallback"},
+            }
+            for doc in docs
+        ]
 
 
 async def search_positions(

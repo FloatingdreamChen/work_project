@@ -88,6 +88,8 @@ class AgentFallbackHandler:
                 "agent": "PositionMatchAgent",
                 "fallback_used": True,
                 "fallback_level": "agent",
+                "response_mode": "fallback_rule",
+                "fallback_reason": "Agent 执行失败，已切换为岗位规则兜底。",
                 "sources": [],
             }
         if agent_type == "study_practice":
@@ -99,6 +101,8 @@ class AgentFallbackHandler:
                 "agent": "StudyPracticeAgent",
                 "fallback_used": True,
                 "fallback_level": "agent",
+                "response_mode": "fallback_rule",
+                "fallback_reason": "Agent 执行失败，已切换为学习练习规则兜底。",
                 "sources": [],
             }
         if error:
@@ -113,6 +117,8 @@ def system_fallback_response(agent_type: str, error: Exception | None = None) ->
         "agent": agent_name,
         "fallback_used": True,
         "fallback_level": "system",
+        "response_mode": "system_fallback",
+        "fallback_reason": "系统级兜底已触发。",
         "error": str(error) if error else None,
         "sources": [],
     }
