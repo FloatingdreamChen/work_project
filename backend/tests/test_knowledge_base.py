@@ -1,7 +1,7 @@
 import asyncio
 
 from backend.config import get_settings
-from backend.core.knowledge_base import KnowledgeBaseClient, LocalKeywordKnowledgeStore
+from backend.core.knowledge_base import KnowledgeBaseClient, LocalKeywordKnowledgeStore, LocalSemanticKnowledgeStore
 from backend.core.model_registry import LocalModelRegistry
 
 
@@ -10,7 +10,7 @@ def test_model_registry_reports_configured_models() -> None:
 
     assert "bge_m3" in statuses
     assert "reranker" in statuses
-    assert statuses["bge_m3"].resolved_path.endswith("backend/models/embedding/bge-m3")
+    assert statuses["bge_m3"].resolved_path.endswith("models/embedding/bge-m3")
 
 
 def test_local_keyword_store_searches_docs() -> None:
@@ -22,10 +22,18 @@ def test_local_keyword_store_searches_docs() -> None:
     assert len(docs) <= 3
 
 
+def test_local_semantic_store_cosine_similarity() -> None:
+    store = LocalSemanticKnowledgeStore()
+
+    assert round(store._cosine([1, 0, 0], [1, 0, 0]), 4) == 1
+    assert round(store._cosine([1, 0, 0], [0, 1, 0]), 4) == 0
+
+
 def test_knowledge_client_falls_back_when_vector_rag_not_ready() -> None:
     settings = get_settings()
     settings.enable_local_models = True
     settings.enable_milvus_rag = True
+    settings.enable_local_semantic_rag = False
 
     results = asyncio.run(KnowledgeBaseClient().search("申论 备考", top_k=2))
 
@@ -34,3 +42,6 @@ def test_knowledge_client_falls_back_when_vector_rag_not_ready() -> None:
     for item in results:
         assert "content" in item
         assert item["is_high_confidence"] is False
+    settings.enable_local_models = False
+    settings.enable_milvus_rag = False
+    settings.enable_local_semantic_rag = False

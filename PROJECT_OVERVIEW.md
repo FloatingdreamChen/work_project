@@ -64,23 +64,26 @@
 本轮 1-9 步优化后新增/增强：
 
 - 本地模型状态探测：可识别 BGE-M3、BGE-Reranker、classifier、finetuned classifier 是否存在。
-- Milvus RAG 链路：已提供 collection 初始化、知识库 chunk 构建、可选 dense+sparse hybrid search、可选 reranker 精排入口。
-- LangGraph Agent：两个 Agent 均为多节点图，支持画像累积、知识检索、联网检索、规则结果、LLM 解释、合规检查和节点级失败降级。
+- Milvus RAG 链路：已提供 collection 初始化、知识库 chunk 构建、dense+sparse hybrid search、reranker 精排入口。
+- 本地语义 RAG 兜底：Milvus 不可用时，可用 BGE-M3 对本地知识库 chunk 做 dense 检索，并缓存 embedding。
+- Query classifier：已接入本地 classifier/finetuned classifier，并基于项目内岗位/备考样本完成一次轻量针对训练。
+- AI 问答路由：先做细粒度问题分类，覆盖日常问答、岗位匹配、备考计划、练习批改、面试模拟、知识问答、问题优化和模糊查询；明确意图不再进入本地 classifier 慢路径。
+- LangGraph Agent：两个 Agent 均为多节点图，支持画像累积、上下文记忆、长期记忆、知识检索、联网检索、规则结果、LLM 解释、合规检查和节点级失败降级。
 - 个性化备考计划：不再固定四周模板，按考试日期、每日小时、每周天数、基础水平、薄弱模块、当前分数动态生成；少于 90 天会提示参考价值不足。
 - 练习长期分析：保存练习指标、申论维度分、错题记录，并提供阶段报告和错题查询。
 - 岗位匹配：增加专业目录标准化、相关专业核验、竞争比、招录人数、往年分数、地区偏好、风险偏好和政策依据。
 - 联网搜索：Tavily/DuckDuckGo 降级，搜索结果带 provider、domain、credibility、published_at、imported_at 和来源审计。
-- 前端工作台：增加匹配策略、政策依据展示、知识库状态/检索、练习历史/错题、统一错误提示。
+- 前端工作台：增加匹配策略、政策依据展示、知识库状态/检索、练习历史/错题、AI 问答问题分类/路由/降级/来源状态展示、统一错误提示。
 - 数据库层：增加 ORM model 映射、Alembic 骨架、导入审计表、知识库表、联网来源审计表和关键索引。
 - 安全合规：增加禁止承诺/伪造材料清洗、日志敏感信息脱敏和对应测试。
 - 测试体系：后端单元测试覆盖 Agent、RAG、图记忆、岗位匹配、导入解析、联网来源质量、数据库 schema、练习服务和合规模块；前端使用 TypeScript + Vite 构建验证。
 
 仍需依赖环境或后续增强：
 
-- 当前项目目录没有复制旧项目约 4.3GB 的完整 BGE-M3 / BGE-Reranker 模型文件；未放入模型前默认走关键词兜底。
-- Milvus hybrid search 和 reranker 精排代码已接入，但需要本地模型文件、Milvus 服务和 `ENABLE_LOCAL_MODELS=true`、`ENABLE_MILVUS_RAG=true` 才会进入生产链路。
+- 当前项目根目录已放入 BGE-M3、BGE-Reranker、classifier、finetuned classifier。默认路径为 `models/...`。
+- Milvus hybrid search 和 reranker 精排需要 Milvus 服务，并设置 `ENABLE_LOCAL_MODELS=true`、`ENABLE_MILVUS_RAG=true`；Milvus 不可用时可继续走本地 BGE-M3 语义检索或关键词兜底。
 - LLM 工具调用目前由 LangGraph 节点编排工具调用，不是完整 ReAct AgentExecutor 自主选择工具。
-- 图记忆当前是进程内轻量状态；长期 checkpointer 可继续接 PostgreSQL/Redis。
+- 图记忆已支持进程内 memory，新增 PostgreSQL/Redis 可选后端；长期摘要策略和 LangGraph 原生 checkpointer 仍可继续增强。
 - 前端仍以一个工作台承载功能，后续可以拆成独立路由页面。
 
 ## 3. 技术栈
@@ -260,22 +263,21 @@ backend/api/v1/auth.py
 ```text
 POST /api/v1/auth/register
 POST /api/v1/auth/login
+POST /api/v1/auth/refresh
 GET  /api/v1/auth/me
 ```
 
 当前能力：
 
-- 用户名注册
+- 用户名 + 邮箱注册
 - bcrypt 密码哈希
-- JWT 登录
+- 密码策略：至少 8 位，必须包含大小写字母和数字
+- JWT access token 登录
+- refresh token 刷新和过期处理
 - Bearer Token 鉴权
-
-当前限制：
-
-- 没有角色权限
-- 没有邮箱、手机号
-- 没有刷新 token
-- 没有登录失败次数限制
+- 角色权限：`admin` / `user`
+- 登录失败次数限制：连续失败 5 次会临时锁定
+- 管理操作可使用 `get_current_admin` 限制权限
 
 ### 6.2 用户画像
 
@@ -342,8 +344,8 @@ POST /api/v1/positions/match
 当前限制：
 
 - XLSX 导入依赖运行环境安装 `openpyxl`
-- 专业目录只做字符串规则判断
-- Milvus/BGE 生产级 RAG 仍需继续完善
+- 专业目录已做小型目录标准化和相关专业核验，但还不是完整教育部专业目录库
+- Milvus/BGE 生产级 RAG 需要先启动 Milvus，并用 `scripts/build_knowledge_base.py --upsert-milvus` 入库
 
 ### 6.4 Chat
 
@@ -362,17 +364,16 @@ POST /api/v1/chat
 
 当前能力：
 
-- 根据关键词判断用户问题属于岗位方向还是备考方向
+- 岗位、报名、资格、专业、备考、申论、行测、面试等明确关键词先走快速路由，避免前端首次问答加载本地 classifier 导致慢启动。
+- 关键词无法明确区分时，再使用本地 finetuned classifier 判断用户问题属于岗位方向还是备考方向。
+- classifier 不可用或低置信时回退默认备考 Agent。
 - 路由到对应 LangGraph Agent
 - 岗位类问题进入 `PositionMatchAgent` 图
 - 备考类问题进入 `StudyPracticeAgent` 图
 - 有 API Key 时由 LLM 基于图状态、知识库和工具结果生成回答
 - LLM 失败时回落到图内规则回答和三层兜底
-
-当前限制：
-
-- 未接入上下文记忆
-- 只有轻量知识库来源引用，尚未接入生产级 Milvus/BGE RAG 来源引用
+- 同一 `conversation_id` 下会保存 recent turns、画像、弱项、当前分数等上下文记忆
+- `GRAPH_MEMORY_BACKEND=postgres` 时写入 `conversation_memories` 表；`redis` 时写入 Redis；默认使用进程内 memory
 
 ### 6.5 Practice
 
@@ -396,12 +397,13 @@ POST /api/v1/practice/review
 - 根据答案长度、结构词、公共治理表达做规则批改
 - 输出评分、优点、问题、优化示例、下一步建议
 - 保存练习 session 和 review
+- 支持面试多轮追问状态，保存 `interview_sessions.stage / turns / summary`
 
 当前限制：
 
 - 不是 LLM 深度批改
 - 不支持材料级申论批改
-- 不支持面试多轮追问状态
+- 面试追问状态已持久化，但还可以继续加入更细的面试评分量表
 
 ## 7. Agent 设计
 
@@ -527,8 +529,8 @@ backend/agents/study_practice/agent.py
 
 当前限制：
 
-- 没有错题长期记忆
-- 已有多节点 LangGraph 基础流，尚未实现长期 checkpoint 记忆和节点级人工中断
+- 已有错题记录、练习指标和 conversation memory；还可继续增强长期摘要策略
+- StudyPracticeAgent 已支持节点级人工中断；LangGraph 原生 checkpointer 通过 `ENABLE_LANGGRAPH_CHECKPOINTS` 可选启用
 
 LangGraph 节点流：
 
@@ -596,14 +598,16 @@ backend/core/retry.py
    - 仍需做 LangGraph 节点级备用节点和状态恢复
 
 3. RAG 层兜底
-   - 已有本地关键词检索兜底
-   - 仍需实现 Milvus/BGE/reranker 的完整生产链路
+   - 第一层：Milvus dense + sparse hybrid search
+   - 第二层：BGE-Reranker 精排
+   - 第三层：Milvus 不可用时走本地 BGE-M3 dense 检索
+   - 第四层：模型或向量服务不可用时走本地关键词检索
+   - 每条结果返回 `confidence`、`is_high_confidence`、`retriever` 元数据
 
 建议后续新增文件：
 
 ```text
 backend/core/fallback.py
-backend/core/query_classifier.py
 backend/agents/position_match/tools.py
 backend/agents/study_practice/tools.py
 ```
@@ -663,18 +667,25 @@ LLMFactory
   - _ainvoke_http()
 ```
 
-### 9.3 规划中的 embedding 和 rerank
+### 9.3 当前 embedding、rerank 和 classifier
 
 Embedding：
 
 ```text
-BGE-M3
+models/embedding/bge-m3
 ```
 
 Reranker：
 
 ```text
-BGE-Reranker
+models/reranker/bge-reranker-large
+```
+
+Classifier：
+
+```text
+models/classifier/all-MiniLM-L6-v2
+models/classifier/query-classifier-finetuned
 ```
 
 用途：
@@ -691,10 +702,12 @@ BGE-Reranker
 当前状态：
 
 - 依赖已写入 `requirements.txt`
-- `scripts/build_knowledge_base.py` 已支持无模型轻量 chunk 构建
-- 默认走本地关键词检索
-- 设置 `ENABLE_LOCAL_MODELS=true` 后才尝试本地模型/Milvus
-- 后端尚未实现完整 Milvus Hybrid Search 写入和 BGE-M3 embedding 入库
+- `scripts/build_knowledge_base.py` 支持本地 chunk 构建、写入 PostgreSQL、写入 Milvus
+- `backend/core/knowledge_base.py` 支持 Milvus hybrid search、本地 BGE-M3 dense 检索、关键词兜底
+- `backend/core/reranker.py` 支持 BGE-Reranker 精排
+- `backend/core/query_classifier.py` 支持本地 classifier 语义路由
+- `scripts/train_query_classifier.py` 已支持基于 `data/training/query_intents.jsonl` 做岗位/备考意图针对训练
+- 本轮已执行一次 1 epoch 轻量训练，输出到 `models/classifier/query-classifier-finetuned`
 
 ## 10. 数据库设计
 
@@ -703,6 +716,13 @@ BGE-Reranker
 ```text
 scripts/init_db.sql
 ```
+
+并发与连接池：
+
+- `backend/db/session.py` 使用 SQLAlchemy async engine 连接池。
+- 配置项：`DB_POOL_SIZE`、`DB_MAX_OVERFLOW`、`DB_POOL_TIMEOUT`。
+- `backend/core/concurrency.py` 提供请求并发限制中间件，配置项为 `REQUEST_CONCURRENCY_LIMIT`。
+- 启动时会设置事件循环默认 `ThreadPoolExecutor`，配置项为 `WORKER_THREAD_POOL_SIZE`，用于密码哈希等阻塞任务。
 
 核心表：
 
@@ -832,7 +852,7 @@ frontend/src/stores/auth.ts
 - 查询岗位
 - 发起岗位匹配
 - 显示匹配结果、风险、人工核验项
-- AI 问答
+- AI 问答，展示 Agent 路由、LLM/规则/系统降级状态、来源数量和会话 ID
 - 练习批改
 
 设计原则：
@@ -1019,8 +1039,8 @@ python -m pytest backend/tests
 - Practice API 测试
 - 数据库集成测试
 - 前端构建测试
-- Agent 兜底测试
-- RAG 检索失败测试
+- LangGraph 原生 checkpointer 集成测试
+- Milvus 真实服务集成测试
 
 ## 16. 后续建设路线
 
@@ -1033,12 +1053,12 @@ python -m pytest backend/tests
 5. 增加岗位匹配规则字段和专业目录核验
 6. 增强 `LLMFactory` 的多 provider 自动切换
 7. 增强 LangGraph 节点级兜底和状态恢复
-8. 接入 Milvus RAG 写入、Hybrid Search 和来源引用
-9. 接入 BGE-M3 和 BGE-Reranker
+8. 启动 Milvus 并批量导入真实政策/岗位/题库知识库
+9. 扩充 query classifier 训练样本和评估集
 10. 增加 ReAct 工具调用规划
 11. 前端拆分真实页面
 12. 增加日志、异常处理、测试和权限控制
 
 ## 17. 当前项目一句话总结
 
-当前项目是一个“考公 AI 助手 MVP 工程骨架”：后端、前端、数据库表、基础 Agent 和主要业务接口已经搭好；现阶段以规则版 Agent 保证基础可用，并已加入 OpenAI-compatible LLM 入口、MCP 工具、轻量知识库检索、两个多节点 LangGraph Agent 基础流和三层兜底雏形。生产级 Milvus/BGE RAG、复杂 ReAct 工具规划、长期记忆和节点级恢复仍需继续增强。
+当前项目已经从“考公 AI 助手 MVP 工程骨架”推进到可运行的 Agent/RAG 工作台：后端、前端、数据库表、两个 LangGraph Agent、OpenAI-compatible LLM、MCP 工具、本地模型识别、Milvus hybrid RAG、本地 BGE-M3 语义兜底、关键词兜底、classifier 语义路由、上下文记忆和 PostgreSQL/Redis 长期记忆后端都已接入。下一步重点是导入真实知识库、跑 Milvus 集成验证、扩充训练集，并继续增强 ReAct 工具规划。

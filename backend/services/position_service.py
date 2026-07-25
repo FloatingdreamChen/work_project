@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,17 +47,42 @@ class PositionService:
         inserted: list[dict] = []
         columns = ", ".join(POSITION_FIELDS)
         params = ", ".join([f":{field}" for field in POSITION_FIELDS])
+        assignments = ", ".join(
+            [f"{field} = :{field}" for field in POSITION_FIELDS if field not in {"position_code"}]
+        )
         for position in positions:
-            result = await db.execute(
-                text(
-                    f"""
-                    INSERT INTO positions ({columns})
-                    VALUES ({params})
-                    RETURNING *
-                    """
-                ),
-                position.model_dump(),
-            )
+            values = self._position_values(position)
+            existing_id = None
+            if values.get("position_code"):
+                existing = await db.execute(
+                    text("SELECT id FROM positions WHERE position_code = :position_code LIMIT 1"),
+                    {"position_code": values["position_code"]},
+                )
+                existing_id = existing.scalar_one_or_none()
+
+            if existing_id:
+                result = await db.execute(
+                    text(
+                        f"""
+                        UPDATE positions
+                        SET {assignments}, imported_at = NOW()
+                        WHERE id = :id
+                        RETURNING *
+                        """
+                    ),
+                    {**values, "id": existing_id},
+                )
+            else:
+                result = await db.execute(
+                    text(
+                        f"""
+                        INSERT INTO positions ({columns})
+                        VALUES ({params})
+                        RETURNING *
+                        """
+                    ),
+                    values,
+                )
             inserted.append(self._row_to_dict(result.mappings().one()))
         await db.commit()
         return inserted
@@ -130,3 +157,19 @@ class PositionService:
         import json
 
         return json.dumps(payload, ensure_ascii=False, default=str)
+
+    def _position_values(self, position: PositionCreate) -> dict:
+        values = position.model_dump()
+        values["source_published_at"] = self._to_datetime(values.get("source_published_at"))
+        return values
+
+    def _to_datetime(self, value: str | datetime | None) -> datetime | None:
+        if value is None or isinstance(value, datetime):
+            return value
+        normalized = value.strip()
+        if not normalized:
+            return None
+        try:
+            return datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        except ValueError:
+            return None

@@ -8,6 +8,8 @@ class PositionMatchState(TypedDict, total=False):
 
     user_message: str
     conversation_id: str | None
+    recent_turns: list[dict[str, str]]
+    long_term_memory: dict[str, Any]
     profile: dict[str, Any]
     extracted_profile: dict[str, Any]
     missing_fields: list[str]
@@ -32,5 +34,7 @@ class PositionMatchState(TypedDict, total=False):
     structured_output: dict[str, Any]
     fallback_used: bool
     fallback_level: str | None
+    response_mode: str
+    fallback_reason: str | None
     compliance_warnings: list[str]
     node_errors: list[dict[str, str]]

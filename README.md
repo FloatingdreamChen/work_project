@@ -50,6 +50,8 @@ work_project/
 - `backend/core/retry.py`：三层兜底雏形，包含自动重试、Agent 级降级、系统级兜底。
 - `backend/mcp/`：知识库检索和联网搜索 MCP 工具服务，联网结果带可信度、发布日期和导入时间元数据。
 - `backend/models/`、`backend/db/alembic/`：ORM model 映射与 Alembic 迁移骨架。
+- `models/`：本地 BGE-M3、BGE-Reranker、classifier、finetuned classifier 模型目录。
+- `scripts/train_query_classifier.py`：基于项目内岗位/备考样本对 query classifier 做轻量针对训练。
 - `backend/tests/`：覆盖 Agent、RAG、图记忆、岗位匹配、导入解析、联网来源质量、数据库 schema、练习服务和合规模块。
 
 ## 本地启动
@@ -82,7 +84,35 @@ npm install
 npm run dev
 ```
 
-前端默认地址：`http://localhost:3000`。首次使用可在登录页输入用户名和密码，先点“注册”，再登录。
+需要从局域网访问时，推荐使用只绑定真实 LAN 网卡的启动方式：
+
+```bash
+cd frontend
+npm run dev:lan
+```
+
+它会自动选择非 VPN、非 bridge 的 IPv4，并打印唯一推荐地址，例如 `http://192.168.40.183:3000`。
+
+前端默认地址：`http://localhost:3000`。后端和前端需要分别占用一个终端持续运行，不能启动后关闭终端。
+
+如果页面打不开，先检查端口是否真的在监听：
+
+```bash
+lsof -nP -iTCP:3000 -sTCP:LISTEN
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+```
+
+`3000` 没有输出表示前端没有启动；`8000` 没有输出表示后端没有启动。Vite 打印的多个 `Network` 地址只是本机网卡列表，只有与访问设备处于同一局域网的真实 IP 才能从其他设备打开。
+
+也可以运行项目内诊断脚本：
+
+```bash
+bash scripts/check_lan_access.sh
+```
+
+当前前端配置已启用 `host: true` 和 `allowedHosts: true`。如果 `localhost` 可以打开但 `Network` 地址打不开，优先选择脚本输出的非 VPN、非 bridge 的 `LAN` 地址；`ppp`、`utun`、`bridge` 网卡地址通常不能作为普通局域网访问地址。
+
+首次使用可在登录页输入用户名和密码，先点“注册”，再登录。
 
 ## 验证
 
@@ -94,6 +124,8 @@ python -m pytest backend/tests
 cd frontend
 npm run build
 ```
+
+模型状态检查和 classifier 训练命令见 `TESTING.md`。
 
 更完整的验证说明见 `TESTING.md`。
 

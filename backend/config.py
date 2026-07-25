@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     debug: bool = True
     secret_key: str = "change-me"
     access_token_expire_minutes: int = 1440
+    refresh_token_expire_days: int = 14
+    login_max_attempts: int = 5
+    login_lock_minutes: int = 15
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout: int = 30
+    request_concurrency_limit: int = 80
+    worker_thread_pool_size: int = 8
 
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
@@ -37,18 +45,24 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.deepseek.com/v1"
     openai_model: str = "deepseek-chat"
     openai_fallback_model: str = "deepseek-chat"
-    llm_timeout_seconds: float = 60.0
-    llm_max_retries: int = 2
+    llm_timeout_seconds: float = 20.0
+    llm_max_retries: int = 0
+    rag_timeout_seconds: float = 3.0
 
     tavily_api_key: str = ""
     enable_web_search: bool = True
     enable_local_models: bool = False
     enable_milvus_rag: bool = False
+    enable_local_semantic_rag: bool = False
+    enable_query_classifier: bool = True
+    enable_langgraph_checkpoints: bool = False
+    graph_memory_backend: str = "memory"
+    redis_url: str = "redis://localhost:6379/0"
 
-    bge_m3_model_path: str = "./backend/models/embedding/bge-m3"
-    reranker_model_path: str = "./backend/models/reranker/bge-reranker-large"
-    classifier_model_path: str = "./backend/models/classifier/all-MiniLM-L6-v2"
-    finetuned_classifier_path: str = "./backend/models/classifier/query-classifier-finetuned"
+    bge_m3_model_path: str = "./models/embedding/bge-m3"
+    reranker_model_path: str = "./models/reranker/bge-reranker-large"
+    classifier_model_path: str = "./models/classifier/all-MiniLM-L6-v2"
+    finetuned_classifier_path: str = "./models/classifier/query-classifier-finetuned"
 
     kb_mcp_server_url: str = "http://localhost:8000/mcp/kb"
     web_search_mcp_url: str = "http://localhost:8000/mcp/web-search"

@@ -18,3 +18,25 @@ def test_report_keyword_and_suggestions() -> None:
 
     assert "结构" in keywords
     assert any("均分低于70" in item for item in suggestions)
+
+
+def test_interview_follow_up_stage_and_summary_helpers() -> None:
+    service = PracticeService()
+
+    assert service._next_interview_stage(1) == "follow_up"
+    assert service._next_interview_stage(3) == "pressure"
+    assert service._next_interview_stage(4) == "summary"
+    assert "协调资源" in service._fallback_follow_up("follow_up", "我会沟通")
+
+    summary = service._summarize_interview(
+        "主题：基层治理",
+        [
+            {
+                "role": "user",
+                "review": {"problems": ["结构不清", "例子不足"]},
+            }
+        ],
+    )
+
+    assert "已完成1轮" in summary
+    assert "结构不清" in summary

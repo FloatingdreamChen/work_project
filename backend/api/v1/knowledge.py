@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from backend.core.knowledge_base import KnowledgeBaseClient
 from backend.core.model_registry import LocalModelRegistry
 from backend.core.responses import ok
-from backend.dependencies import get_current_user
+from backend.dependencies import get_current_admin, get_current_user
 from backend.schemas.knowledge import KnowledgeSearchRequest
 
 
@@ -25,6 +25,7 @@ async def knowledge_status(current_user: dict = Depends(get_current_user)) -> di
                 for name, status in statuses.items()
             },
             "vector_rag_ready": LocalModelRegistry.ready_for_vector_rag(),
+            "local_semantic_rag_ready": statuses["bge_m3"].exists,
         }
     )
 
@@ -38,5 +39,5 @@ async def knowledge_search(
 
 
 @router.post("/init-milvus")
-async def init_milvus(current_user: dict = Depends(get_current_user)) -> dict:
+async def init_milvus(current_user: dict = Depends(get_current_admin)) -> dict:
     return ok(KnowledgeBaseClient().ensure_collection())
